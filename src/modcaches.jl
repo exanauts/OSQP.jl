@@ -115,7 +115,7 @@ struct ProblemModificationCache{T}
 end
 
 function processupdates!(model::OSQP.Model, cache::ProblemModificationCache)
-    if cache.l.dirty && cache.u.dirty
+    if cache.l.dirty || cache.u.dirty
         # Special case because setting just l or u may cause an 'upper bound must be greater than or equal to lower bound' error
         OSQP.update_bounds!(model, cache.l.data, cache.u.data)
         cache.l.dirty = false
@@ -125,8 +125,8 @@ function processupdates!(model::OSQP.Model, cache::ProblemModificationCache)
     processupdates!(model, cache.P, OSQP.update_P!)
     processupdates!(model, cache.q, OSQP.update_q!)
     processupdates!(model, cache.A, OSQP.update_A!)
-    processupdates!(model, cache.l, OSQP.update_l!)
-    processupdates!(model, cache.u, OSQP.update_u!)
+    # processupdates!(model, cache.l, OSQP.update_l!)
+    # processupdates!(model, cache.u, OSQP.update_u!)
 end
 
 struct WarmStartCache{T}

@@ -3,6 +3,7 @@ module OSQP
 export OSQPMathProgBaseInterface
 using SparseArrays
 using LinearAlgebra
+using Libdl
 
 
 if isfile(joinpath(dirname(@__FILE__), "..", "deps", "deps.jl"))
@@ -14,6 +15,14 @@ end
 
 function __init__()
     # Get version
+    Libdl.dlopen("/usr/lib/x86_64-linux-gnu/libcublas.so.10",RTLD_GLOBAL) 
+    Libdl.dlopen("/usr/lib/x86_64-linux-gnu/libcublasLt.so.10", RTLD_GLOBAL) 
+    Libdl.dlopen("/usr/lib/x86_64-linux-gnu/libcuda.so", RTLD_GLOBAL) 
+    Libdl.dlopen("/usr/local/cuda/lib64/libcusparse.so", RTLD_GLOBAL) 
+    # Libdl.dlopen("libcublas.so.10", RTLD_GLOBAL) 
+    # Libdl.dlopen("libcublasLt.so.10", RTLD_GLOBAL) 
+    # Libdl.dlopen("libcuda.so", RTLD_GLOBAL) 
+    # Libdl.dlopen("libcusparse.so", RTLD_GLOBAL) 
     ver_array = split(version(), ".")
     ver_string = string(ver_array[1], ".", ver_array[2], ".", ver_array[3])  # Get string without dev vers
     vnum = VersionNumber(ver_string)

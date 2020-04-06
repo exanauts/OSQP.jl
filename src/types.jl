@@ -2,30 +2,30 @@
 # https://github.com/oxfordcontrol/osqp/blob/master/include/types.h
 
 # Integer type from C
-if Sys.WORD_SIZE == 64   # 64bit system
-    const Cc_int = Clonglong
-else  # 32bit system
+#if Sys.WORD_SIZE == 64   # 64bit system
+    # const Cc_int = Clonglong
+#else  # 32bit system
     const Cc_int = Cint
-end
+#end
 
 struct Ccsc
-    nzmax::Cc_int
     m::Cc_int
     n::Cc_int
     p::Ptr{Cc_int}
     i::Ptr{Cc_int}
     x::Ptr{Cdouble}
+    nzmax::Cc_int
     nz::Cc_int
 end
 
 
 struct ManagedCcsc
-    nzmax::Cc_int
     m::Cc_int
     n::Cc_int
     p::Vector{Cc_int}
     i::Vector{Cc_int}
     x::Vector{Cdouble}
+    nzmax::Cc_int
     nz::Cc_int
 
 end
@@ -45,7 +45,7 @@ function ManagedCcsc(M::SparseMatrixCSC)
     p = convert(Array{Cc_int,1}, M.colptr .- 1)
 
     # Create new ManagedCcsc matrix
-    ManagedCcsc(length(M.nzval), m, n, p, i, x, -1)
+    ManagedCcsc(m, n, p, i, x, length(M.nzval), -1)
 end
 
 function Base.convert(::Type{SparseMatrixCSC}, c::OSQP.Ccsc)
@@ -55,19 +55,21 @@ function Base.convert(::Type{SparseMatrixCSC}, c::OSQP.Ccsc)
   nzval = [unsafe_load(c.x, i) for i=1:nzmax]
   rowval = [unsafe_load(c.i, i) for i=1:nzmax] .+ 1
   colptr = [unsafe_load(c.p, i) for i=1:(n+1)] .+ 1
-  SparseMatrixCSC(m, n, colptr, rowval, nzval)
+  SparseMatrixCSC{Float64, Cc_int}(m, n, colptr, rowval, nzval)
 end
 
 # Returns an Ccsc matrix. The vectors are *not* GC tracked in the struct.
 # Use this only when you know that the managed matrix will outlive the Ccsc
 # matrix.
 Ccsc(m::ManagedCcsc) =
-    Ccsc(m.nzmax, m.m, m.n, pointer(m.p), pointer(m.i), pointer(m.x), m.nz)
+    Ccsc(m.m, m.n, pointer(m.p), pointer(m.i), pointer(m.x), m.nzmax, m.nz)
 
 
 struct Solution
     x::Ptr{Cdouble}
     y::Ptr{Cdouble}
+    prim_inf_cert::Ptr{Cdouble}
+    dual_inf_cert::Ptr{Cdouble}
 end
 
 # Internal C type for info
@@ -79,6 +81,8 @@ struct CInfo
     # TODO: Find a better way to do this
     status::NTuple{32,Cchar}
     status_val::Cc_int
+    rho_updates::Cc_int
+    rho_estimate::Cdouble
     status_polish::Cc_int
     obj_val::Cdouble
     pri_res::Cdouble
@@ -88,43 +92,31 @@ struct CInfo
     update_time::Cdouble
     polish_time::Cdouble
     run_time::Cdouble
-    rho_updates::Cc_int
-    rho_estimate::Cdouble
 end
-
-struct Data
-    n::Cc_int
-    m::Cc_int
-    P::Ptr{Ccsc}
-    A::Ptr{Ccsc}
-    q::Ptr{Cdouble}
-    l::Ptr{Cdouble}
-    u::Ptr{Cdouble}
-end
-
 
 struct Settings
     rho::Cdouble
+    rho_is_vec::Cc_int
     sigma::Cdouble
     scaling::Cc_int
-    adaptive_rho::Cc_int
-    adaptive_rho_interval::Cc_int
-    adaptive_rho_tolerance::Cdouble
-    adaptive_rho_fraction::Cdouble
     max_iter::Cc_int
     eps_abs::Cdouble
     eps_rel::Cdouble
     eps_prim_inf::Cdouble
     eps_dual_inf::Cdouble
     alpha::Cdouble
+    scaled_termination::Cc_int
+    check_termination::Cc_int
+    warm_start::Cc_int
     linsys_solver::Cint  # Enum type
+    adaptive_rho::Cc_int
+    adaptive_rho_interval::Cc_int
+    adaptive_rho_tolerance::Cdouble
+    adaptive_rho_fraction::Cdouble
     delta::Cdouble
     polish::Cc_int
     polish_refine_iter::Cc_int
     verbose::Cc_int
-    scaled_termination::Cc_int
-    check_termination::Cc_int
-    warm_start::Cc_int
     time_limit::Cdouble
 end
 
@@ -142,12 +134,17 @@ function Settings(settings_dict::Dict{Symbol,Any})
 
 
        # Convert linsys_solver string to number
-    linsys_solver_str_to_int!(settings_dict)
+    # linsys_solver_str_to_int!(settings_dict)
 
     # Get list with elements of default and user settings
     # If setting is in the passed settings (settings_dict),
     # then convert type to the right type. Otherwise just take
     # the default one
+
+    # These default settings are form the non-cuda version of OSQP
+    # settings_dict[:check_termination] = 25
+    # settings_dict[:adaptive_rho_interval] = 0
+    # settings_dict[:adaptive_rho_tolerance] = 5.0
     settings_list = [setting in keys(settings_dict) ?
              convert(fieldtype(typeof(default_settings), setting), settings_dict[setting]) :
              getfield(default_settings, setting)
@@ -159,61 +156,12 @@ function Settings(settings_dict::Dict{Symbol,Any})
 
 end
 
-
-
-struct Workspace
-    data::Ptr{OSQP.Data}
-    linsys_solver::Ptr{Nothing}
-    pol::Ptr{Nothing}
-
-    rho_vec::Ptr{Cdouble}
-    rho_inv_vec::Ptr{Cdouble}
-    constr_type::Ptr{Cc_int}
-
-    # Iterates
-    x::Ptr{Cdouble}
-    y::Ptr{Cdouble}
-    z::Ptr{Cdouble}
-    xz_tilde::Ptr{Cdouble}
-    x_prev::Ptr{Cdouble}
-    z_prev::Ptr{Cdouble}
-
-    # Primal and dual residuals
-    Ax::Ptr{Cdouble}
-    Px::Ptr{Cdouble}
-    Aty::Ptr{Cdouble}
-
-    # Primal infeasibility
-    delta_y::Ptr{Cdouble}
-    Atdelta_y::Ptr{Cdouble}
-
-    # Dual infeasibility
-    delta_x::Ptr{Cdouble}
-    Pdelta_x::Ptr{Cdouble}
-    Adelta_x::Ptr{Cdouble}
-
-
-    # Scaling
-    D_temp::Ptr{Cdouble}
-    D_temp_A::Ptr{Cdouble}
-    E_temp::Ptr{Cdouble}
-
-    settings::Ptr{OSQP.Settings}
-    scaling::Ptr{Nothing}
-    solution::Ptr{OSQP.Solution}
-    info::Ptr{OSQP.CInfo}
-
-    timer::Ptr{Nothing}
-    first_run::Cc_int
-    summary_printed::Cc_int
-
-end
-
-
 mutable struct Info
     iter::Int64
     status::Symbol
     status_val::Int64
+    rho_updates::Int64
+    rho_estimate::Float64
     status_polish::Int64
     obj_val::Float64
     pri_res::Float64
@@ -223,10 +171,15 @@ mutable struct Info
     update_time::Float64
     polish_time::Float64
     run_time::Float64
-    rho_updates::Int64
-    rho_estimate::Float64
 
     Info() = new()
+end
+
+mutable struct Solver
+  settings::Ptr{Settings}  
+  solution::Ptr{Solution}
+  info::Ptr{CInfo}    
+  work::Ptr{Nothing}
 end
 
 function copyto!(info::Info, cinfo::CInfo)
@@ -243,7 +196,7 @@ function copyto!(info::Info, cinfo::CInfo)
     info.polish_time = cinfo.polish_time
     info.run_time = cinfo.run_time
     info.rho_updates = cinfo.rho_updates
-    info.rho_estimate
+    info.rho_estimate = cinfo.rho_estimate
     info
 end
 
